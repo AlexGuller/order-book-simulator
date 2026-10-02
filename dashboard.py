@@ -1,22 +1,23 @@
-import tkinter as tk
-from simulation import run_simulation
-from tkinter import ttk
-
-from itertools import accumulate
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
-from decimal import Decimal, InvalidOperation
-from tkinter import messagebox
-from order_book import Order
-
 import random
+import tkinter as tk
+from decimal import Decimal, InvalidOperation
+from itertools import accumulate
+from tkinter import messagebox, ttk
 
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
+from order_book import Order
+from simulation import run_simulation
+
+
+# Window Layout
 root = tk.Tk()
 root.title("Order Book Simulator")
 root.geometry("1400x850")
 root.configure(bg="#101318")
 
+# Allow all panels to expand, giving the chart more horizontal space.
 root.rowconfigure(0, weight=1)
 root.columnconfigure(0, weight=1)
 root.columnconfigure(1, weight=3)
@@ -24,15 +25,18 @@ root.columnconfigure(2, weight=1)
 
 panels = {}
 
-for column, name in enumerate(["DEPTH OF MARKET", "CUMULATIVE DEPTH", "ORDER ENTRY"]):
+for column, name in enumerate(
+    ["DEPTH OF MARKET", "CUMULATIVE DEPTH", "ORDER ENTRY"]
+):
     panel = tk.Frame(root, bg="#181d25")
     panel.grid(
-        row=0, 
-        column=column, 
-        sticky="nsew", 
+        row=0,
+        column=column,
+        sticky="nsew",
         padx=6,
-        pady=10,)
-    
+        pady=10,
+    )
+
     title = tk.Label(
         panel,
         text=name,
@@ -40,13 +44,14 @@ for column, name in enumerate(["DEPTH OF MARKET", "CUMULATIVE DEPTH", "ORDER ENT
         fg="#aab2bf",
         font=("Arial", 11, "bold"),
     )
-    
-    title.pack(anchor="w",padx=12,pady=12)
-    
+    title.pack(anchor="w", padx=12, pady=12)
     panels[name] = panel
 
+# Generate the initial book before starting interactive order flow.
 book = run_simulation(num_steps=1000)
 
+
+# Price Ladder
 style = ttk.Style()
 style.theme_use("clam")
 
@@ -81,21 +86,21 @@ for column, heading in [
 
 ladder.pack(fill="both", expand=True, padx=12, pady=12)
 
+# Tags apply different colors to bid, ask, and spread rows.
 ladder.tag_configure("bid", foreground="#36b5a5")
 ladder.tag_configure("ask", foreground="#ef6464")
 ladder.tag_configure("spread", foreground="#f0c541")
 
-bids = book.get_depth("buy")
-asks = book.get_depth("sell")
 
 def refresh_ladder():
-    # Clear the old rows.
+    # Replace displayed rows without changing the actual orders.
     for item in ladder.get_children():
         ladder.delete(item)
 
     bids = book.get_depth("buy")
     asks = book.get_depth("sell")
 
+    # Descending asks put the best ask directly above the spread.
     for price in sorted(asks, reverse=True):
         ladder.insert(
             "",
@@ -106,7 +111,6 @@ def refresh_ladder():
 
     if bids and asks:
         spread = min(asks) - max(bids)
-
         ladder.insert(
             "",
             "end",
@@ -114,6 +118,7 @@ def refresh_ladder():
             tags=("spread",),
         )
 
+    # The highest bid appears directly below the spread.
     for price in sorted(bids, reverse=True):
         ladder.insert(
             "",
@@ -121,7 +126,10 @@ def refresh_ladder():
             values=(bids[price], f"{price / 100:.2f}", ""),
             tags=("bid",),
         )
-# Create the chart and embed it once.
+
+
+# Cumulative Depth Chart
+# Create and embed the canvas once; refresh only its plotted contents.
 fig = Figure(figsize=(7, 5), facecolor="#181d25")
 ax = fig.add_subplot(111)
 
@@ -144,12 +152,14 @@ def refresh_chart():
     bids = book.get_depth("buy")
     asks = book.get_depth("sell")
 
+    # Accumulate quantities outward from the best price on each side.
     bid_prices = sorted(bids, reverse=True)
     ask_prices = sorted(asks)
 
     bid_totals = list(accumulate(bids[p] for p in bid_prices))
     ask_totals = list(accumulate(asks[p] for p in ask_prices))
 
+    # Reverse bid coordinates so prices increase from left to right.
     bid_x = [p / 100 for p in reversed(bid_prices)]
     bid_y = list(reversed(bid_totals))
 
@@ -158,7 +168,8 @@ def refresh_chart():
 
     ax.step(bid_x, bid_y, where="pre", color="#36b5a5")
     ax.fill_between(
-        bid_x, bid_y,
+        bid_x,
+        bid_y,
         step="pre",
         color="#36b5a5",
         alpha=0.2,
@@ -166,12 +177,14 @@ def refresh_chart():
 
     ax.step(ask_x, ask_y, where="post", color="#ef6464")
     ax.fill_between(
-        ask_x, ask_y,
+        ask_x,
+        ask_y,
         step="post",
         color="#ef6464",
         alpha=0.2,
     )
 
+    # Convert the average best bid/ask from cents to dollars.
     if bids and asks:
         midpoint = (max(bids) + min(asks)) / 200
         ax.axvline(midpoint, color="#f0c541", linestyle="--")
@@ -186,6 +199,7 @@ def refresh_chart():
         spine.set_color("#39414d")
 
     fig.tight_layout()
+    # Request a redraw through Tkinter's event loop.
     canvas.draw_idle()
 
 
@@ -193,12 +207,13 @@ def refresh_display():
     refresh_ladder()
     refresh_chart()
 
-entry_panel = panels["ORDER ENTRY"]
 
+# Manual Order Entry
+entry_panel = panels["ORDER ENTRY"]
 side_var = tk.StringVar(value="buy")
 type_var = tk.StringVar(value="limit")
 
-# Continue after the IDs used by the simulation.
+# Manual and simulated orders share one sequence of unique IDs.
 next_order_id = max(book.used_order_ids, default=0) + 1
 
 
@@ -246,6 +261,7 @@ def submit_order():
         price = None
 
         if type_var.get() == "limit":
+            # Decimal converts dollar input to cents without float rounding.
             cents = Decimal(price_entry.get()) * 100
 
             if not cents.is_finite():
@@ -263,6 +279,7 @@ def submit_order():
             quantity,
         )
 
+        # The matching engine validates and processes the submitted order.
         if type_var.get() == "market":
             book.add_market_order(order)
         else:
@@ -272,6 +289,7 @@ def submit_order():
         messagebox.showerror("Invalid order", str(error))
         return
 
+    # Advance the ID only after the order is accepted.
     next_order_id += 1
     refresh_display()
 
@@ -282,6 +300,8 @@ ttk.Button(
     command=submit_order,
 ).pack(fill="x", padx=12, pady=16)
 
+
+# Live Random Order Flow
 rng = random.Random()
 running = False
 
@@ -292,7 +312,7 @@ def generate_random_order():
     side = rng.choice(["buy", "sell"])
     quantity = rng.randint(1, 20)
 
-    # Place limit orders around the current midpoint.
+    # Use the midpoint, an available quote, or $100 as the reference.
     if book.bids and book.asks:
         reference = (book.bids[0].price + book.asks[0].price) // 2
     elif book.bids:
@@ -302,6 +322,7 @@ def generate_random_order():
     else:
         reference = 10000
 
+    # Choose a price within 30 cents, keeping it strictly positive.
     price = max(1, reference + rng.randint(-30, 30))
 
     order = Order(next_order_id, side, price, quantity)
@@ -316,7 +337,7 @@ def simulation_tick():
     generate_random_order()
     refresh_display()
 
-    # Schedule the next order in 500 milliseconds.
+    # Schedule another step without blocking UI interactions.
     root.after(500, simulation_tick)
 
 
@@ -329,6 +350,7 @@ def toggle_simulation():
         flow_button.configure(text="Pause Flow")
         simulation_tick()
     else:
+        # A pending tick will exit if flow remains paused.
         flow_button.configure(text="Start Flow")
 
 
@@ -339,5 +361,7 @@ flow_button = ttk.Button(
 )
 flow_button.pack(fill="x", padx=12, pady=10)
 
+
+# Render the initial book, then handle window events and callbacks.
 refresh_display()
 root.mainloop()
